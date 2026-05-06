@@ -85,6 +85,7 @@ const train: ActionDef = {
   id: "train",
   label: "Train",
   description: "Focused workout. Solid boost to a physical stat, light fatigue.",
+  cost: 1,
   resolve(_c, ctx) {
     const candidates = ["hitting", "power", "speed", "fielding", "arm"];
     const target = ctx.rng.pick(candidates);
@@ -105,6 +106,7 @@ const study: ActionDef = {
   id: "study",
   label: "Study film",
   description: "Watch tape. Boosts Baseball IQ and Discipline.",
+  cost: 1,
   resolve(_c, ctx) {
     const iq = ctx.rng.int(1, 3);
     const disc = ctx.rng.int(0, 2);
@@ -123,11 +125,43 @@ const study: ActionDef = {
 const rest: ActionDef = {
   id: "rest",
   label: "Rest",
-  description: "Take a year off intense training. Recover from fatigue.",
+  description: "Recover. -fatigue, +1 action point (capped).",
+  cost: 0,
   resolve() {
     return outcome()
-      .stat("fatigue", -25, "rest")
-      .info("Rested and recovered")
+      .stat("fatigue", -15, "rest")
+      .ap(1)
+      .info("Rested up")
+      .build();
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Action: Steroids — phase-gated, big upside, accumulates PED suspicion.
+// ---------------------------------------------------------------------------
+
+const steroids: ActionDef = {
+  id: "steroids",
+  label: "Use steroids",
+  description: "Big physical boost. Risk of suspension at season's end.",
+  cost: 1,
+  // Only available once you're playing for pay, age 18+. Two-strikes rule:
+  // a player who's already served two suspensions can't dose again — their
+  // career is hanging by a thread.
+  available: (c) =>
+    (c.phaseId === "minors" || c.phaseId === "majors") &&
+    c.age >= 18 &&
+    (c.records.pedSuspensions ?? 0) < 2,
+  resolve(_c, ctx) {
+    return outcome()
+      .stat("power", ctx.rng.int(4, 7), "PEDs")
+      .stat("hitting", ctx.rng.int(2, 4), "PEDs")
+      .stat("speed", ctx.rng.int(1, 3), "PEDs")
+      .stat("pedRisk", ctx.rng.int(20, 30), "PEDs")
+      .warning(
+        "On the juice",
+        "You feel different. Stats up. Risk piling up.",
+      )
       .build();
   },
 };
@@ -171,8 +205,9 @@ function ageDevelopment(career: Career, ctx: ResolverContext): { stat: string; d
 const playSeason: ActionDef = {
   id: "play_season",
   label: "Play season",
-  description: "Compete for a full season. Outcome depends on your stats.",
+  description: "Compete for a full season. +2 AP base, +1 per milestone hit.",
   phases: ["highSchool", "college", "minors", "majors"],
+  endsYear: true,
   resolve(career, ctx) {
     const result = simulateSeason(career, ctx);
     const o = outcome()
@@ -194,14 +229,22 @@ const playSeason: ActionDef = {
       o.stat(d.stat, d.delta, d.reason);
     }
 
+    // Award point refill: 2 base, +1 per qualifying milestone (all-star, MVP,
+    // 100+ hit season, 30+ HR season). Caps via engine clamp.
+    let apBonus = 2;
     if (result.allStar) {
       o.record("allStars", 1).success("All-Star selection");
       o.stat("reputation", 4, "all-star");
+      apBonus += 1;
     }
     if (result.mvp) {
       o.record("mvps", 1).success("MVP award");
       o.stat("reputation", 8, "mvp");
+      apBonus += 1;
     }
+    if (result.hits >= 150) apBonus += 1;
+    if (result.homeRuns >= 30) apBonus += 1;
+    o.ap(apBonus);
 
     // Earnings: scaled by league + reputation. Majors pay real money.
     const earnings = (() => {
@@ -219,6 +262,36 @@ const playSeason: ActionDef = {
       }
     })();
     if (earnings > 0) o.money(earnings);
+
+    // Drug test. Probability = pedRisk / 200, so risk 100 → 50% bust rate.
+    // First strike: -10 to top stats, lose the year's pay equivalent in
+    // reputation, suspended event. Second strike: forced retirement.
+    const pedRisk = ctx.stat("pedRisk");
+    if (pedRisk > 0 && ctx.rng.chance(pedRisk / 200)) {
+      const priorBusts = career.records.pedSuspensions ?? 0;
+      o.record("pedSuspensions", 1);
+      if (priorBusts === 0) {
+        o.warning(
+          "Suspended for PED use",
+          "Failed a drug test. Out for the rest of the year. Reputation hit.",
+        )
+          .stat("reputation", -20, "suspension")
+          .stat("power", -3, "off-cycle")
+          .stat("hitting", -2, "off-cycle")
+          .stat("pedRisk", -50, "post-suspension scrutiny");
+      } else {
+        o.warning(
+          "Career ended in disgrace",
+          "A second failed test. The league's done with you.",
+        )
+          .stat("reputation", -40, "scandal")
+          .transition("retired")
+          .retire();
+      }
+    } else {
+      // Risk decays a bit each clean season.
+      o.stat("pedRisk", -8, "off-cycle");
+    }
 
     // Promotion check: minors player with solid production gets called up.
     // Forced transitions beat the phase's auto-advance, so a 32-year-old who
@@ -245,6 +318,7 @@ const retireAction: ActionDef = {
   label: "Retire",
   description: "Hang up the cleats.",
   available: (c) => c.phaseId !== "retired" && (c.age >= 30 || c.phaseId === "majors"),
+  endsYear: true,
   resolve() {
     return outcome().transition("retired").retire().success("Retired").build();
   },
@@ -264,6 +338,110 @@ const acceptScoutDraft: ActionDef = {
       .money(80)
       .success("Signed with a pro scout", "Skipping the rest of school for the minors.")
       .build();
+  },
+};
+
+const coachPepTalk: ActionDef = {
+  id: "coach_pep_talk",
+  label: "Hear coach out",
+  resolve(_c, ctx) {
+    const iq = ctx.rng.int(1, 3);
+    const disc = ctx.rng.int(1, 2);
+    return outcome()
+      .stat("intelligence", iq, "coach")
+      .stat("discipline", disc, "coach")
+      .info("Coach gave you the talk", "Locked in for next season.")
+      .build();
+  },
+};
+
+const charityGala: ActionDef = {
+  id: "charity_gala",
+  label: "Attend gala",
+  resolve(_c, ctx) {
+    const cha = ctx.rng.int(2, 4);
+    const rep = ctx.rng.int(2, 5);
+    const cash = ctx.rng.int(50, 150);
+    return outcome()
+      .stat("charisma", cha, "gala")
+      .stat("reputation", rep, "gala")
+      .money(cash)
+      .success("Charity gala", `Worked the room. +${rep} reputation.`)
+      .build();
+  },
+};
+
+const layLow: ActionDef = {
+  id: "lay_low",
+  label: "Lay low",
+  // The point of this option: in a year someone's snooping you skip the
+  // headline-chasing and let scrutiny cool off. Restores tokens too.
+  resolve(_c, ctx) {
+    return outcome()
+      .stat("pedRisk", -ctx.rng.int(20, 30), "lay low")
+      .ap(1)
+      .info("Kept your head down", "Heat's off for now.")
+      .build();
+  },
+};
+
+const veteranMentor: ActionDef = {
+  id: "veteran_mentor",
+  label: "Take the meeting",
+  resolve(_c, ctx) {
+    const disc = ctx.rng.int(2, 4);
+    const iq = ctx.rng.int(2, 4);
+    return outcome()
+      .stat("discipline", disc, "mentor")
+      .stat("intelligence", iq, "mentor")
+      .stat("reputation", 2, "mentor")
+      .success("Found a mentor", "An old hand showed you the ropes.")
+      .build();
+  },
+};
+
+const skipForInjury: ActionDef = {
+  id: "skip_for_injury",
+  label: "Sit it out",
+  // An injury "opportunity" with both options modeled as choices: Sit gives
+  // recovery; Push (the other variant generated separately) tries to play
+  // through it. Both are end-year because they cover the season itself.
+  endsYear: true,
+  resolve() {
+    return outcome()
+      .stat("fatigue", -30, "rehab")
+      .stat("pedRisk", -10, "off-cycle")
+      .ap(2)
+      .warning(
+        "Sat out injured",
+        "No season this year, but the body recovered.",
+      )
+      .build();
+  },
+};
+
+const pushThroughInjury: ActionDef = {
+  id: "push_through_injury",
+  label: "Push through",
+  endsYear: true,
+  resolve(career, ctx) {
+    // Roll: small chance of hero outcome, larger chance of stat damage.
+    const heroic = ctx.rng.chance(0.15);
+    const o = outcome().stat("fatigue", 30, "playing hurt");
+    if (heroic) {
+      o.success("Played hurt and won", "Reputation soared. The fans never forgot.")
+        .stat("reputation", 10, "iron man")
+        .ap(2);
+    } else {
+      o.warning("Made it worse", "Body never quite came back the same.")
+        .stat(ctx.rng.pick(["speed", "fielding", "arm"]), -ctx.rng.int(3, 6), "injury")
+        .stat("hitting", -ctx.rng.int(1, 3), "injury")
+        .ap(1);
+    }
+    // Either way, age advances since this stands in for the season. Career
+    // promotion check stays where it is — pushing through doesn't promote.
+    o.info(`Played through injury at ${career.age}`);
+    return o.build();
   },
 };
 
@@ -300,6 +478,7 @@ export const ACTIONS: ActionDef[] = [
   train,
   study,
   rest,
+  steroids,
   playSeason,
   retireAction,
 ];
@@ -308,6 +487,12 @@ export const OPPORTUNITY_ACTIONS: ActionDef[] = [
   acceptScoutDraft,
   acceptEndorsement,
   acceptFreeAgency,
+  coachPepTalk,
+  charityGala,
+  layLow,
+  veteranMentor,
+  skipForInjury,
+  pushThroughInjury,
 ];
 
 // ---------------------------------------------------------------------------
@@ -336,7 +521,7 @@ export function generateOpportunities(career: Career, ctx: ResolverContext) {
 
   // Endorsement deals for charismatic majors players with reputation.
   if (career.phaseId === "majors" && ctx.stat("reputation") > 40) {
-    if (ctx.rng.chance(0.25)) {
+    if (ctx.rng.chance(0.3)) {
       out.push(
         makeOpportunity(
           `endorse-${career.turn}`,
@@ -360,6 +545,96 @@ export function generateOpportunities(career: Career, ctx: ResolverContext) {
         "Free agency",
         {
           description: "Your contract is up. Sign a new one for a bonus.",
+          expiresIn: 1,
+        },
+      ),
+    );
+  }
+
+  // Coach pep talk in development phases when discipline / IQ are lagging.
+  const inSchool = career.phaseId === "highSchool" || career.phaseId === "college";
+  if (inSchool && ctx.stat("intelligence") < 55 && ctx.rng.chance(0.4)) {
+    out.push(
+      makeOpportunity(
+        `pep-${career.turn}`,
+        "coach_pep_talk",
+        "Coach wants a word",
+        {
+          description: "She thinks you're not playing smart enough. Wants to break down film.",
+          expiresIn: 1,
+        },
+      ),
+    );
+  }
+
+  // Veteran mentor in early minors years.
+  if (career.phaseId === "minors" && career.age <= 26 && ctx.rng.chance(0.18)) {
+    out.push(
+      makeOpportunity(
+        `mentor-${career.turn}`,
+        "veteran_mentor",
+        "Veteran offers to mentor you",
+        {
+          description: "An old timer in the clubhouse sees something in you.",
+          expiresIn: 2,
+        },
+      ),
+    );
+  }
+
+  // Charity gala for established big leaguers.
+  if (career.phaseId === "majors" && ctx.stat("reputation") > 30 && ctx.rng.chance(0.25)) {
+    out.push(
+      makeOpportunity(
+        `gala-${career.turn}`,
+        "charity_gala",
+        "Charity gala invitation",
+        {
+          description: "A foundation wants you on the dais. Free press, but it's a long night.",
+          expiresIn: 1,
+        },
+      ),
+    );
+  }
+
+  // Drug-test rumor — fires when suspicion is climbing. Pure narrative
+  // intervention to give the player a way to de-risk.
+  if (ctx.stat("pedRisk") >= 30 && ctx.rng.chance(0.5)) {
+    out.push(
+      makeOpportunity(
+        `laylow-${career.turn}`,
+        "lay_low",
+        "Heard a rumor",
+        {
+          description: "Word is the league is sniffing around. Want to lay low this year?",
+          expiresIn: 1,
+        },
+      ),
+    );
+  }
+
+  // Injury fork: high fatigue + active player → sit it out or push through.
+  // Both branches are endsYear; declining is also an option (engine handles
+  // that as "do nothing this year"), so the player has three real choices.
+  const inLeague =
+    career.phaseId === "minors" || career.phaseId === "majors";
+  if (inLeague && ctx.stat("fatigue") >= 65 && ctx.rng.chance(0.35)) {
+    out.push(
+      makeOpportunity(
+        `injsit-${career.turn}`,
+        "skip_for_injury",
+        "Tweaked something — sit?",
+        {
+          description: "Trainer says you're hurt. Take the season off to heal up?",
+          expiresIn: 1,
+        },
+      ),
+      makeOpportunity(
+        `injpush-${career.turn}`,
+        "push_through_injury",
+        "Tweaked something — push through?",
+        {
+          description: "Tape it up and play. Could be heroic. Could end your career.",
           expiresIn: 1,
         },
       ),

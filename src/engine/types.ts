@@ -94,9 +94,17 @@ export interface ActionDef {
   // The phases in which this action is selectable. If empty/undefined, the
   // action is available in every phase.
   phases?: ID[];
+  // Action point cost. Engine deducts before resolve runs and refuses the
+  // action if the player can't afford it. Default 0.
+  cost?: number;
+  // When true, taking this action advances the year: bumps turn/age, runs
+  // phase auto-advance, ticks opportunity expiry, and runs the theme's
+  // per-turn opportunity generator. Mid-year actions skip all of that.
+  endsYear?: boolean;
   // Hard precondition. If false the action is hidden from the menu.
   available?: (career: Career) => boolean;
   // Soft precondition for greying out (still visible, not selectable).
+  // The engine additionally disables actions when cost > actionPoints.
   enabled?: (career: Career) => boolean;
   // Resolver: produces an outcome, possibly stochastic. Resolvers MUST use
   // `ctx.rng` for randomness — direct Math.random calls break replays.
@@ -137,6 +145,11 @@ export interface Outcome {
   retire?: boolean;
   // Money / resource delta in the career's primary currency.
   money?: number;
+  // Action point delta applied AFTER the action's own cost has been
+  // deducted. Use positive values for "Rest"-style actions that grant points
+  // and for season-end milestone bonuses; negative values for one-off
+  // penalties. Clamped to [0, career.actionPointsMax].
+  actionPoints?: number;
 }
 
 export type EventKind =
@@ -208,6 +221,10 @@ export interface Theme {
   generateOpportunities?: (career: Career, ctx: ResolverContext) => Opportunity[];
   // Initial career factory — produces a fresh starting state.
   newCareer: (name: string, rng: RNG) => Career;
+  // Optional action-point defaults. The engine reads these when bootstrapping
+  // a new career (themes can also hard-code them in newCareer).
+  actionPointsBase?: number;
+  actionPointsMax?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +253,10 @@ export interface Career {
   history: EngineEvent[];
   // Optional money / resource pool.
   money: number;
+  // Action point pool. Persists across years: train/study/etc. spend, rest
+  // and play_season replenish. Capped at actionPointsMax.
+  actionPoints: number;
+  actionPointsMax: number;
   // Set when the player retires or is forced out.
   retired: boolean;
   // Schema version — bumped when the save format changes.

@@ -12,6 +12,8 @@ export const baseballTheme: Theme = {
   id: "baseball",
   name: "Baseball",
   currencyLabel: "$ (k)",
+  actionPointsBase: 3,
+  actionPointsMax: 6,
   stats: STATS,
   phases: PHASES,
   records: RECORDS,
@@ -38,6 +40,8 @@ export const baseballTheme: Theme = {
         },
       ],
       money: 0,
+      actionPoints: 3,
+      actionPointsMax: 6,
       retired: false,
       version: 1,
     };

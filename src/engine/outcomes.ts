@@ -14,6 +14,7 @@ export class OutcomeBuilder {
   private oppsArr: Opportunity[] = [];
   private recordsArr: RecordDelta[] = [];
   private money_ = 0;
+  private ap_ = 0;
   private retire_ = false;
   private transitionTo_?: string;
 
@@ -60,6 +61,11 @@ export class OutcomeBuilder {
     return this;
   }
 
+  ap(delta: number): this {
+    this.ap_ += delta;
+    return this;
+  }
+
   retire(): this {
     this.retire_ = true;
     return this;
@@ -77,6 +83,7 @@ export class OutcomeBuilder {
     if (this.oppsArr.length) out.opportunities = this.oppsArr;
     if (this.recordsArr.length) out.records = this.recordsArr;
     if (this.money_ !== 0) out.money = this.money_;
+    if (this.ap_ !== 0) out.actionPoints = this.ap_;
     if (this.retire_) out.retire = true;
     if (this.transitionTo_) out.transitionTo = this.transitionTo_;
     return out;
@@ -98,6 +105,8 @@ export function mergeOutcomes(...parts: Outcome[]): Outcome {
       (out.opportunities ||= []).push(...p.opportunities);
     if (p.records?.length) (out.records ||= []).push(...p.records);
     if (typeof p.money === "number") out.money = (out.money ?? 0) + p.money;
+    if (typeof p.actionPoints === "number")
+      out.actionPoints = (out.actionPoints ?? 0) + p.actionPoints;
     if (p.retire) out.retire = true;
     if (p.transitionTo) out.transitionTo = p.transitionTo;
   }

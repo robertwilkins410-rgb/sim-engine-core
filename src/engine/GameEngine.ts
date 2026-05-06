@@ -59,6 +59,7 @@ export class GameEngine {
         seed: this.rng.state,
         stats: { ...initialStats(theme), ...base.stats },
         records: { ...initialRecords(theme), ...base.records },
+        actionPoints: Math.min(base.actionPoints, base.actionPointsMax),
       };
     } else {
       this.career_ = careerOrOpts as Career;
@@ -105,9 +106,11 @@ export class GameEngine {
     if (!def) return false;
     if (def.available && !def.available(this.career_)) return false;
     if (def.enabled && !def.enabled(this.career_)) return false;
+    const cost = def.cost ?? 0;
+    if (cost > this.career_.actionPoints) return false;
     const ctx = this.context(this.career_);
     const outcome = def.resolve(this.career_, ctx);
-    this.applyTurn(outcome, ctx);
+    this.applyTurn(outcome, ctx, { cost, endsYear: def.endsYear === true });
     return true;
   }
 
@@ -117,6 +120,8 @@ export class GameEngine {
     if (!opp) return false;
     const def = opportunityIndex(this.theme).get(opp.actionId);
     if (!def) return false;
+    const cost = def.cost ?? 0;
+    if (cost > this.career_.actionPoints) return false;
     const ctx = this.context(this.career_);
     const outcome = def.resolve(this.career_, ctx);
     // Remove the chosen opportunity from the queue alongside the outcome.
@@ -124,7 +129,7 @@ export class GameEngine {
       ...this.career_,
       opportunities: removeOpportunity(this.career_.opportunities, oppId),
     };
-    this.applyTurn(outcome, ctx);
+    this.applyTurn(outcome, ctx, { cost, endsYear: def.endsYear === true });
     return true;
   }
 
@@ -148,10 +153,20 @@ export class GameEngine {
 
   // ---- turn pipeline ----------------------------------------------------
 
-  // Apply outcome → tick opportunities/expiry → check phase auto-advance →
-  // generate next-turn opportunities → bump turn/age → save → notify.
-  private applyTurn(outcome: Outcome, ctx: ResolverContext): void {
+  // Mid-year actions (cost AP, no time pass): apply effects, adjust AP,
+  // persist. End-year actions also run phase auto-advance, opportunity
+  // tick + generation, retirement check, and time bump.
+  private applyTurn(
+    outcome: Outcome,
+    ctx: ResolverContext,
+    opts: { cost: number; endsYear: boolean },
+  ): void {
     let career = this.career_;
+
+    // 0. Deduct action cost up-front.
+    if (opts.cost > 0) {
+      career = { ...career, actionPoints: career.actionPoints - opts.cost };
+    }
 
     // 1. Stat deltas.
     if (outcome.stats?.length) {
@@ -193,7 +208,18 @@ export class GameEngine {
       };
     }
 
-    // 6. Forced phase transition.
+    // 6. Action point gain (e.g., Rest, season-end refill). Clamped to max.
+    if (typeof outcome.actionPoints === "number" && outcome.actionPoints !== 0) {
+      const np = career.actionPoints + outcome.actionPoints;
+      const max = career.actionPointsMax;
+      career = {
+        ...career,
+        actionPoints: np < 0 ? 0 : np > max ? max : np,
+      };
+    }
+
+    // 7. Forced phase transition. Allowed mid-year (e.g., a one-off opp that
+    // promotes a player) so themes can use it freely.
     if (outcome.transitionTo && outcome.transitionTo !== career.phaseId) {
       const transitionEvents = transition(career, outcome.transitionTo, ctx);
       career = {
@@ -203,31 +229,33 @@ export class GameEngine {
       };
     }
 
-    // 7. Auto-advance check (themed advanceWhen predicate).
-    const auto = checkAutoAdvance(career, this.theme);
-    if (auto) {
-      const transitionEvents = transition(career, auto, ctx);
-      career = {
-        ...career,
-        phaseId: auto,
-        history: appendEvents(career.history, transitionEvents, career),
-      };
+    if (opts.endsYear) {
+      // 8. Auto-advance check (themed advanceWhen predicate).
+      const auto = checkAutoAdvance(career, this.theme);
+      if (auto) {
+        const transitionEvents = transition(career, auto, ctx);
+        career = {
+          ...career,
+          phaseId: auto,
+          history: appendEvents(career.history, transitionEvents, career),
+        };
+      }
+
+      // 9. Tick existing opportunity expiries.
+      career = { ...career, opportunities: tickExpiry(career.opportunities) };
+
+      // 10. Generate new per-turn opportunities (theme hook).
+      const generated = generateOpps(career, ctx);
+      if (generated.length) {
+        career = {
+          ...career,
+          opportunities: mergeOpps(career.opportunities, generated),
+        };
+      }
     }
 
-    // 8. Tick existing opportunity expiries.
-    career = { ...career, opportunities: tickExpiry(career.opportunities) };
-
-    // 9. Generate new per-turn opportunities (theme hook).
-    const generated = generateOpps(career, ctx);
-    if (generated.length) {
-      career = {
-        ...career,
-        opportunities: mergeOpps(career.opportunities, generated),
-      };
-    }
-
-    // 10. Retirement. Either explicit (outcome.retire) or implicit (the phase
-    // we ended this turn in is terminal). Both paths emit a single "Career
+    // 11. Retirement. Either explicit (outcome.retire) or implicit (we ended
+    // this turn in a terminal phase). Both paths emit a single "Career
     // ended" event when the flag flips.
     const landedTerminal = phaseDef(this.theme, career.phaseId)?.terminal === true;
     if ((outcome.retire || landedTerminal) && !career.retired) {
@@ -242,13 +270,17 @@ export class GameEngine {
       };
     }
 
-    // 11. Advance time.
-    career = {
-      ...career,
-      turn: career.turn + 1,
-      age: career.age + 1,
-      seed: this.rng.state,
-    };
+    // 12. Time only advances on end-year actions.
+    if (opts.endsYear) {
+      career = {
+        ...career,
+        turn: career.turn + 1,
+        age: career.age + 1,
+      };
+    }
+
+    // 13. Snapshot RNG state into the seed so saves stay reproducible.
+    career = { ...career, seed: this.rng.state };
 
     this.career_ = career;
     this.persist();

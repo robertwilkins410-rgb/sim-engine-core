@@ -123,6 +123,31 @@ body {
   margin: 0 0 var(--space-3);
 }
 
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.card-head .card-title {
+  margin: 0;
+}
+
+.ap-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---- summary --------------------------------------------------------- */
 
 .summary-grid {
@@ -244,6 +269,12 @@ body {
   color: white;
 }
 
+.btn-secondary {
+  background: var(--bg-elev-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+
 .btn-danger {
   background: transparent;
   border-color: var(--danger);
@@ -275,14 +306,39 @@ body {
 
 .btn-action {
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   text-align: left;
   padding: var(--space-3) var(--space-4);
   gap: 2px;
 }
 
+.btn-action .label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+}
+
 .btn-action .label {
   font-size: 1rem;
+}
+
+.btn-action .cost-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  white-space: nowrap;
+}
+
+.btn-secondary .cost-badge {
+  background: var(--bg-elev);
+  color: var(--text-dim);
 }
 
 .btn-action .desc {

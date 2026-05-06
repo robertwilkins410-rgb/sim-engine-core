@@ -15,7 +15,10 @@ export function buildMenu(theme: Theme, career: Career): MenuEntry[] {
       if (!action.phases.includes(career.phaseId)) continue;
     }
     if (action.available && !action.available(career)) continue;
-    const enabled = action.enabled ? action.enabled(career) : true;
+    let enabled = action.enabled ? action.enabled(career) : true;
+    // Affordability: actions costing more AP than the player has are visible
+    // but disabled — the player should know what's available next year.
+    if (enabled && (action.cost ?? 0) > career.actionPoints) enabled = false;
     entries.push({ action, enabled });
   }
   return entries;

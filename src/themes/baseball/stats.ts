@@ -19,6 +19,10 @@ export const STATS: StatDef[] = [
   // Status
   { id: "fatigue", label: "Fatigue", group: "Status", min: 0, max: 100, default: 0, higherIsBetter: false },
   { id: "reputation", label: "Reputation", group: "Status", min: 0, max: 100, default: 10, higherIsBetter: true },
+  // Hidden-ish: visible so the player feels the heat after using PEDs, but
+  // accumulates only when steroids are used. Drives the season drug-test
+  // probability and decays naturally each year.
+  { id: "pedRisk", label: "PED Suspicion", group: "Status", min: 0, max: 100, default: 0, higherIsBetter: false },
 
   // Latest-season slash-line snapshot. Updated by play_season resolvers.
   { id: "lastAvg", label: "AVG", group: "Last Season", min: 0, max: 1, default: 0, format: fmt3, higherIsBetter: true },

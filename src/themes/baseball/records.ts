@@ -31,4 +31,8 @@ export const RECORDS: RecordDef[] = [
     milestones: [1, 3],
     milestoneLabel: (n) => (n === 1 ? "First MVP award" : `${n} MVP awards`),
   },
+  {
+    id: "pedSuspensions",
+    label: "PED Suspensions",
+  },
 ];

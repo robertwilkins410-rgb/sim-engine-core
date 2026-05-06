@@ -69,12 +69,15 @@ function statRow(def: StatDef, value: number): HTMLElement {
 // ---- actions ----------------------------------------------------------
 
 export function renderActions(engine: GameEngine, onChange: () => void): HTMLElement {
+  const career = engine.career;
   const menu = engine.menu();
-  const buttons = menu.map((entry) =>
-    el(
+  const buttons = menu.map((entry) => {
+    const cost = entry.action.cost ?? 0;
+    const endsYear = entry.action.endsYear === true;
+    return el(
       "button",
       {
-        class: "btn btn-action btn-primary",
+        class: `btn btn-action ${endsYear ? "btn-primary" : "btn-secondary"}`,
         type: "button",
         disabled: !entry.enabled,
         onclick: () => {
@@ -82,18 +85,32 @@ export function renderActions(engine: GameEngine, onChange: () => void): HTMLEle
         },
       },
       [
-        el("span", { class: "label" }, [entry.action.label]),
+        el("span", { class: "label-row" }, [
+          el("span", { class: "label" }, [entry.action.label]),
+          el("span", { class: "cost-badge" }, [costLabel(cost, endsYear)]),
+        ]),
         entry.action.description
           ? el("span", { class: "desc" }, [entry.action.description])
           : null,
       ],
-    ),
-  );
+    );
+  });
 
   return el("section", { class: "card" }, [
-    el("h2", { class: "card-title" }, ["Actions"]),
+    el("div", { class: "card-head" }, [
+      el("h2", { class: "card-title" }, ["Actions"]),
+      el("span", { class: "ap-pill" }, [
+        `${career.actionPoints} / ${career.actionPointsMax} AP`,
+      ]),
+    ]),
     el("div", { class: "btn-grid" }, buttons),
   ]);
+}
+
+function costLabel(cost: number, endsYear: boolean): string {
+  if (endsYear) return "End year";
+  if (cost > 0) return `${cost} AP`;
+  return "Free";
 }
 
 // ---- opportunities ----------------------------------------------------
