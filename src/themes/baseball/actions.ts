@@ -53,7 +53,10 @@ function simulateSeason(career: Career, ctx: ResolverContext): SeasonResult {
   // Fatigue erodes performance up to ~10% at max.
   const fatPenalty = 1 - fatigue * 0.1;
 
-  const avg = clamp01((0.18 + hit * 0.18 - (diff - 0.5) * 0.1) * fatPenalty + noise());
+  // Coefficient on hit is the dominant driver of slash-line outcomes; tuned so
+  // a hit=50 minors player hovers around .250 and a hit=80 majors player hits
+  // around .280, matching the rough shape of real-world distributions.
+  const avg = clamp01((0.18 + hit * 0.22 - (diff - 0.5) * 0.08) * fatPenalty + noise());
   const obp = clamp01(avg + 0.04 + disc * 0.08 + noise());
   const slg = clamp01(avg + pwr * 0.25 + noise());
 
@@ -81,11 +84,11 @@ function simulateSeason(career: Career, ctx: ResolverContext): SeasonResult {
 const train: ActionDef = {
   id: "train",
   label: "Train",
-  description: "Focused workout. Small boost to a physical stat, light fatigue.",
+  description: "Focused workout. Solid boost to a physical stat, light fatigue.",
   resolve(_c, ctx) {
     const candidates = ["hitting", "power", "speed", "fielding", "arm"];
     const target = ctx.rng.pick(candidates);
-    const gain = ctx.rng.int(1, 3);
+    const gain = ctx.rng.int(2, 4);
     return outcome()
       .stat(target, gain, "training")
       .stat("fatigue", 4, "training")
@@ -134,6 +137,37 @@ const rest: ActionDef = {
 // promotion checks, and award events.
 // ---------------------------------------------------------------------------
 
+// Natural development per season. Younger players grow fast; established
+// players plateau; veterans decline. Returns a list of (stat, delta, reason)
+// tuples so the caller can fold them into the outcome.
+function ageDevelopment(career: Career, ctx: ResolverContext): { stat: string; delta: number; reason: string }[] {
+  const physical = ["hitting", "power", "speed", "fielding", "arm"];
+  const mental = ["discipline", "intelligence"];
+  const out: { stat: string; delta: number; reason: string }[] = [];
+  const age = career.age;
+
+  if (age <= 21) {
+    // Three physical bumps + one mental bump. Big growth window — a player
+    // who only plays seasons should still develop into a viable prospect.
+    out.push({ stat: ctx.rng.pick(physical), delta: ctx.rng.int(1, 3), reason: "development" });
+    out.push({ stat: ctx.rng.pick(physical), delta: ctx.rng.int(1, 3), reason: "development" });
+    out.push({ stat: ctx.rng.pick(physical), delta: ctx.rng.int(1, 2), reason: "development" });
+    out.push({ stat: ctx.rng.pick(mental), delta: ctx.rng.int(0, 2), reason: "development" });
+  } else if (age <= 28) {
+    // Steady — one small bump.
+    out.push({ stat: ctx.rng.pick(physical), delta: ctx.rng.int(0, 2), reason: "experience" });
+  } else if (age <= 34) {
+    // Late-career: experience helps the mental, body starts slowing.
+    out.push({ stat: ctx.rng.pick(["speed", "fielding"]), delta: -ctx.rng.int(1, 2), reason: "age" });
+    out.push({ stat: ctx.rng.pick(mental), delta: ctx.rng.int(0, 1), reason: "veteran" });
+  } else {
+    // Decline phase.
+    out.push({ stat: ctx.rng.pick(physical), delta: -ctx.rng.int(1, 2), reason: "age" });
+    out.push({ stat: ctx.rng.pick(physical), delta: -ctx.rng.int(0, 2), reason: "age" });
+  }
+  return out;
+}
+
 const playSeason: ActionDef = {
   id: "play_season",
   label: "Play season",
@@ -154,6 +188,11 @@ const playSeason: ActionDef = {
         `${result.avg.toFixed(3)} / ${result.obp.toFixed(3)} / ${result.slg.toFixed(3)} ` +
           `· ${result.hits} H · ${result.homeRuns} HR · ${result.stolenBases} SB`,
       );
+
+    // Natural development / decline.
+    for (const d of ageDevelopment(career, ctx)) {
+      o.stat(d.stat, d.delta, d.reason);
+    }
 
     if (result.allStar) {
       o.record("allStars", 1).success("All-Star selection");
@@ -181,24 +220,16 @@ const playSeason: ActionDef = {
     })();
     if (earnings > 0) o.money(earnings);
 
-    // Promotion check: minors player with strong production gets called up.
+    // Promotion check: minors player with solid production gets called up.
+    // Forced transitions beat the phase's auto-advance, so a 32-year-old who
+    // hits the threshold makes it instead of washing out the same turn.
     if (career.phaseId === "minors") {
       const ovr =
         ctx.stat("hitting") + ctx.stat("power") + ctx.stat("fielding") + ctx.stat("arm");
-      const promote =
-        result.avg > 0.275 && ovr > 220 && ctx.rng.chance(0.5);
+      const promote = result.avg > 0.245 && ovr > 155 && ctx.rng.chance(0.55);
       if (promote) {
         o.transition("majors").success("Called up to the majors");
       }
-    }
-
-    // High school / college natural progression at year-end.
-    if (career.phaseId === "highSchool" && career.age >= 18) {
-      // College recruits who didn't get drafted (no scout offer this year).
-      o.transition("college").info("Graduated high school, off to college");
-    }
-    if (career.phaseId === "college" && career.age >= 22) {
-      o.transition("minors").info("Drafted into the minor leagues");
     }
 
     return o.build();
@@ -287,7 +318,7 @@ export function generateOpportunities(career: Career, ctx: ResolverContext) {
   const out = [];
 
   // Scout draft offer for promising high schoolers.
-  if (career.phaseId === "highSchool" && ctx.stat("hitting") + ctx.stat("power") > 90) {
+  if (career.phaseId === "highSchool" && ctx.stat("hitting") + ctx.stat("power") > 75) {
     if (ctx.rng.chance(0.35)) {
       out.push(
         makeOpportunity(

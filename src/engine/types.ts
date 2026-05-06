@@ -75,6 +75,9 @@ export interface PhaseDef {
   // themes narrate transitions without reaching into the engine.
   onEnter?: (career: Career, ctx: ResolverContext) => EngineEvent[] | void;
   onExit?: (career: Career, ctx: ResolverContext) => EngineEvent[] | void;
+  // Terminal phases end the run: entering one sets `career.retired = true`.
+  // The "retired" / "ended" sink for any career arc.
+  terminal?: boolean;
 }
 
 // ---------------------------------------------------------------------------

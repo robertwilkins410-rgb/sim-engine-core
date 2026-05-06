@@ -7,7 +7,7 @@ import {
   tickExpiry,
 } from "./opportunities";
 import { applyRecordDeltas, initialRecords } from "./records";
-import { checkAutoAdvance, transition } from "./phases";
+import { checkAutoAdvance, phaseDef, transition } from "./phases";
 import { createRng, seedFromString } from "./rng";
 import { applyDeltas, initialStats } from "./stats";
 import { mergeOutcomes } from "./outcomes";
@@ -226,8 +226,11 @@ export class GameEngine {
       };
     }
 
-    // 10. Retirement.
-    if (outcome.retire) {
+    // 10. Retirement. Either explicit (outcome.retire) or implicit (the phase
+    // we ended this turn in is terminal). Both paths emit a single "Career
+    // ended" event when the flag flips.
+    const landedTerminal = phaseDef(this.theme, career.phaseId)?.terminal === true;
+    if ((outcome.retire || landedTerminal) && !career.retired) {
       career = {
         ...career,
         retired: true,
